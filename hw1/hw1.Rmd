@@ -1,0 +1,184 @@
+---
+title: "ISOM 3530 Assignment 1"
+author: "thleeal"
+date: "2025-02-28"
+output: html_document
+---
+
+```{R}
+# Preliminary study 
+# 1. How many cases pay for advertisement fee to Facebook? 
+df = read.csv("Assignment 1/facebook.csv",stringsAsFactors = TRUE)
+
+str(df)
+
+table(df$Paid)
+paid_count = sum(df$Paid == "Yes", na.rm = TRUE)
+print(paste("Number of cases that pay for advertisement:", paid_count))
+# As what it shows in the table, there are 139 cases paid for advertisement fee
+# to Facebook and this matches with the paid_count.
+```
+```{R}
+# 2. ‘Type’, ‘Category’, ‘Post_time’, ‘ Paid’ may have impact on the number of 
+# clicks, visualize each factor on ‘Click’ by side-by-side boxplot. Comment on 
+# the results
+library(ggplot2)
+
+ggplot(df,aes(x = Type, y = Click)) +
+  geom_boxplot() +
+  ggtitle("Clicks by Type")
+
+# The boxplots shows that "Type" has a great impact on the number of "Click" since
+# we could see that different types of post could have different impact on the number 
+# of "Click". We could also see that "Status" has the highest impact on "Click" since 
+# it has the highest median, lower quartile, and upper quartile of "Click" among the 
+# 3 types of post. It is believed that by have "Status" post, it can attract more clicks,
+# compared to the other types.
+# Then, we have "Video", "Photo", and "Link" in descending order of the impact on "Click". 
+# However, "Photo" has the most outliers among all types of post. 
+
+ggplot(df,aes(x = Category, y = Click)) +
+  geom_boxplot() +
+  ggtitle("Clicks by Category")
+
+# From the 3 boxplots, we could see that they have a similar median and lower quartile of 
+# "Click". However, the "B" category has a much higher upper quartile of "Click" among the 
+# 3 categories. So, it is believed that the "B" category can attract more clicks, compared 
+# to the other categories.
+
+
+ggplot(df,aes(x = Post_time, y = Click)) +
+  geom_boxplot() +
+  ggtitle("Clicks by Post_time")
+
+# From the boxplots, we could see that "Day" and "Night" have a similar median, lower quartile,
+# upper quartile, maximum value, and minimum value of "Click". However, the "Day" time has 
+# slightly more outliers than the "Night" time. But in general, it is believed that the factor 
+# "Post_time" has no impact on the number of "Click" and posting on day time or night time would
+# help attract clicks.
+
+
+ggplot(df,aes(x = Paid, y = Click)) +
+  geom_boxplot() +
+  ggtitle("Clicks by Paid")
+
+# From the boxplots, we could see that "Yes" has a slightly higher median, lower quartile, and 
+# upper qurtile of "Click" than "No". So, it is believed that paying for advertisement fee could 
+# have some but positive impact on the number of "Click" and this could help attract some more
+# clicks. However, the effect is not very significant since the difference between "Yes" and "No"
+# is not very large.
+```
+
+```{R}
+# Missing Value 
+# 1. Report which variables contain missing values and the total number of them 
+# for each variable
+summary(df)
+
+# As what it shows in the summary, "Clicks" and "Page_total_likes" contain
+# missing values. The total number of missing values for "Clicks" is 13, and
+# the total number of missing values for "Page_total_likes" is 18.
+
+# verify the missing values
+missing_values <- colSums(is.na(df))
+print("Missing values per variable:")
+print(missing_values)
+# Indeed, the previous result is correct.
+```
+
+```{R}
+# 2. Fill in the missing values in ‘Page_total_likes’ by its mean value. 
+df$Page_total_likes[is.na(df$Page_total_likes)] = mean(df$Page_total_likes, na.rm = TRUE)
+```
+
+```{R}
+# 3. According to Q2 in preliminary study, use the most influential factor on 
+# ‘Click’, fill in the missing values of ‘Click’ by grouped means.  
+
+# According to the boxplots drawn in Q2 in preliminary study, "Type" is the most influential factor on "Click". 
+# Therefore, we will fill in the missing values of "Click" by the grouped means of the corresponding "Type".
+# That is to say, we will calculate the mean of "Click" for each "Type" and fill in the missing values of "Click" with the corresponding mean of "Click" for the corresponding "Type".
+
+df$Click = ifelse(is.na(df$Click), ave(df$Click, df$Type, FUN = function(x) mean(x, na.rm = TRUE)), df$Click)
+```
+
+```{R}
+# Feature engineering 
+# 1. “Post_day” indicates the day of a week. Classify the day into weekday and 
+# weekend may be a better way to observe the effect on number of click. Create 
+# a variable corresponds to this classification. Name it as “isWeekend”.
+
+# Create 'isWeekend' variable
+df$isWeekend = ifelse(df$Post_day %in% c(6, 7), "weekend", "weekday") # where 6 = Saturday, 7 = Sunday
+```
+
+```{R}
+# Regressing modeling 
+# 1. Build a regression model using the details below: 
+#       • The response variable is log(“Click”); 
+#       • The predictors are “Type”,”Page_total_likes”,”Post_time”,”Category”, 
+#         “Paid”, “isWeekend”. 
+#       • Use the dataset with all the data preprocessing completed from above 
+#         tasks 
+
+df$Click = log(df$Click)
+df$isWeekend = as.factor(df$isWeekend)
+
+model = lm(Click ~ Type + Page_total_likes + Post_time + Category + Paid + isWeekend, data = df)
+summary(model)
+
+library(car)
+vif(model) 
+# The VIF values of all the predictors are less than 10, which means that there is no multicollinearity in the model.
+```
+
+```{R}
+# 2. Comment on normality, constant variance assumption with graphical supports. 
+
+# Residuals vs Fitted plot
+plot(model, which = 1)
+
+# Normal Q-Q plot
+plot(model, which = 2)
+
+# From the residual plot, we could see that as the points are kind of randomly scattered,
+# the points that are greater than 0 or less than 0 are more or less canceling most of each
+# other out. So, the mean is around 0. So, in general, the residuals are centered around 0,
+# which satisfies the mean 0 assumption.
+
+# Also, the Q-Q plot shows that the residuals are not approximately normally distributed,
+# since we could see that the deviations from the straight line are a lot and signficant
+# at both ends. But forturnately, as the sample size is large enough (we have 499 observations
+# which is larger than 170 (= 30 + 20 * (9-1)), the number for satisfying the central limit
+# theorem given we have 9 predictors), the normality assumption is not very important and 
+# can be ignored.
+
+# Then for the constant variance assumption, from the residual plot, we could see that the
+# residuals are randomly scattered around the horizontal line of 0 in the range of (-2, 2),
+# expect for some points falling out of this range, which means that the constant variance
+# assumption is satisfied.
+
+# As we don't have time series data, we don't need to check the independence assumption.
+```
+
+```{R}
+# 3. Give a short business insight from the regression model. 
+
+# As the four assumptions are satisfied, we can trust the result of the regression model. So, 
+# as the summary of the regression model shows that the p-value of the F-statistic is less
+# than 0.05, it means that the regression model is significant. The R-squared value is 0.2793,
+# which means that the model explains 27.93% of the variance in the response variable. The adjusted
+# R-squared value is 0.2717, which is close to the R-squared value, which means that the model is
+# not overfitting. The p-values of the predictors of "Type - Photo", "Type - Status", "Type - Video",
+# "Page_total_likes", and "Paid - Yes" are less than 0.05, which means that they are significant
+# predictors of the response variable. However, "Paid - Yes" is not that signeficant, compared to the
+# other significant predictors. The p-values of the predictors of "Type - Link", "Category - B",
+# "Category - C", "Post_time - Night", "isWeekend - weekend" are greater than 0.05, which means that
+# they are not significant predictors of the response variable. So, the business insight is that
+# the factors that significantly impact the number of clicks are "Type - Photo", "Type - Status", "Type - Video",
+# "Page_total_likes", and "Paid - Yes". This suggests that the company should focus on these factors to
+# attract more clicks. For example, the company should post more "Photo" and "Status" posts, increase the
+# number of "Page_total_likes", and pay for advertisement fee to attract more clicks.
+```
+
+
