@@ -1,0 +1,306 @@
+```{R}
+# Case 1: Forecasting Tractor Sales
+
+#Thunder Horse is a farming tractor manufacturer. The company observes a consistent 
+#growth in its revenue from tractor sales recently. However, it is not easy to keep it’s 
+#inventory and production cost down because of variability in sales and tractor 
+#demand. The management team wants to reduce the production/inventory cost. 
+#Forecasting sale/demand of tractors for next 3 years is a pro-active measure.
+
+# Load data and libraries
+library(zoo)         # for as.yearmon
+library(forecast)    # for auto.arima, forecast
+library(tseries)     # for adf.test, kpss.test
+library(ggplot2)
+
+# Read the CSV
+tractor <- read.csv("Tractor-Sales.csv", stringsAsFactors=FALSE)
+tractor$Month <- as.yearmon(tractor$Month.Year, "%b-%y")
+
+# Create a monthly ts object starting Jan 2003
+ts_sales <- ts(tractor$Number.of.Tractor.Sold,
+               start = c(2003,1), frequency = 12)
+
+# Preliminary study 
+# 1. Draw a timeseries plot of sales. By visual checking from the timeseries plot, 
+# comment on the constant variance across time.
+
+# Time‐series plot of sales
+autoplot(ts_sales) + ggtitle("Monthly Tractor Sales") + ylab("Units Sold")
+
+# Interpretation:
+# The variance is not constant and is increasing across time as the sales grows larger over time.
+# From the plot, we can see that the peaks and troughs of sales are more pronounced as the sales 
+# grows over time. This indicates heteroscedasticity, where the spread of data points around the
+# trend widens  with higher sales levels. 
+
+# 2. If the constant variance is not met, try a log transformation on sales. Draw a 
+# timeseries plot of log(sales), any improvement?
+
+# Since the variance is not constant, we can try a log transformation to stabilize it.
+# Log transformation
+log_sales <- log(ts_sales)
+autoplot(log_sales) + ggtitle("Log-Transformed Monthly Sales") + ylab("log(Units Sold)")
+
+# Interpretation:
+# The log transformation stabilizes variance and also preserves the trend and seasonality. The 
+# variance is now more constant across time and this makes the time series plot more homoscedastic.
+# The log transformation compresses the scale of the data, making it easier to identify patterns 
+# and trends. The log-transformed series appears more linear and less volatile, indicating that 
+# the log transformation has improved the homogeneity of variance.
+
+# 3. Do you observe seasonal pattern of log(sales)? If yes, what is the length of a 
+# cycle? 
+
+ggseasonplot(log_sales, year.labels = TRUE) 
+
+plot(decompose(log_sales)) # Seasonal decomposition
+
+# Interpretation:
+# As we have 12 years of data and we can see that there are 12 seasonal cycles in the data when
+# we plot the seasonal decomposition. 
+
+# Yes. From the two plots, we can both see that there is an annual seasonal pattern of log(sales).
+# Peaks and troughs recur every 12 months. Therefore, the length of a cycle is 12 months
+```
+
+```{R}
+# Modeling   
+# 1. Apply ADF and KPSS test to check the need of differencing on log(sales). 
+# Keep applying the differencing until stationary.
+
+# Stationarity tests on log(sales)
+adf.test(log_sales)       # H0: unit root (non‐stationary)
+# ADF test
+# p-value = 0.01 < 0.05: reject null hypothesis of non-stationarity
+
+kpss.test(log_sales)      # H0: level stationarity
+# KPSS test
+# p-value = 0.01 < 0.05: reject null hypothesis of stationarity
+
+# As we reject the null hypothesis for both ADF and KPSS tests, we conclude that the series is 
+# difference stationary. Differencing is to be used to make series stationary and the differenced
+# series should be checked for stationarity. 
+
+# First differencing
+d1 <- diff(log_sales, 1)
+
+adf.test(d1)
+# ADF test
+# p-value = 0.01 < 0.05: reject the null hypothesis of non-stationarity
+
+kpss.test(d1)
+# KPSS test
+# p-value = 0.1 > 0.05: # do not reject the null hypothesis of stationarity
+
+# As we reject the null hypothesis for the ADF test and don't reject the null hypothesis of the KPSS
+# test, we can conclude that the differenced log sales series is stationary as both ADF and KPSS tests
+# indicate stationarity. Thus, we can proceed with the differenced series for modeling and no further
+# differencing is needed.
+
+# 2. Print the ACF plot of the stationary series from above, do you see any signal 
+# of seasonal feature? 
+
+# ACF of stationary series
+acf(d1, lag.max=36, main="ACF of Differenced Series")
+
+# Interpretation:
+# From the ACF plot, we can see that significant autocorrelation is shown at lag 1,2, and 3. Here, 1 refers
+# to 1 cycle (12 months) so lag 1 = lag 12 and so on. This indicates a signal of seasonal feature in the data
+# , and the length of the seasonal cycle is 12 months. For every 12 months, we will have a signficant 
+# autocorrelation. 
+
+# 3. Use AIC to determine the best SARIMA model. (Remark: directly use 
+# ‘log(sales)’ as the response in the modelling function).
+
+# Fit SARIMA by AIC
+fit <- auto.arima(log_sales)
+fit
+
+# Interpretation:
+# By auto.arima, the best model is ARIMA(0,1,1)(0,1,1)[12] which minimizes AIC.
+```
+
+```{R}
+# 4. Draw the forecasting for next 3 years. 
+
+# Forecast next 3 years (36 months)
+fc <- forecast(fit, h=36)
+fc
+plot(forecast(fc))
+
+# In original scale:
+# Create data frames for history and forecast (including both CIs)
+hist_df <- data.frame(
+  Time  = time(ts_sales),
+  Sales = as.numeric(ts_sales)
+)
+
+fc_df <- data.frame(
+  Time     = time(fc$mean),
+  Forecast = as.numeric(exp(fc$mean)),
+  Lo80     = as.numeric(exp(fc$lower[,"80%"])),
+  Hi80     = as.numeric(exp(fc$upper[,"80%"])),
+  Lo95     = as.numeric(exp(fc$lower[,"95%"])),
+  Hi95     = as.numeric(exp(fc$upper[,"95%"]))
+)
+
+# Plot with both ribbons
+library(ggplot2)
+ggplot() +
+  # Historical data
+  geom_line(data = hist_df,
+            aes(x = Time, y = Sales),
+            color = "black") +
+  # 95% CI ribbon
+  geom_ribbon(data = fc_df,
+              aes(x = Time, ymin = Lo95, ymax = Hi95),
+              fill = "blue", alpha = 0.15) +
+  # 80% CI ribbon
+  geom_ribbon(data = fc_df,
+              aes(x = Time, ymin = Lo80, ymax = Hi80),
+              fill = "blue", alpha = 0.30) +
+  # Forecast line
+  geom_line(data = fc_df,
+            aes(x = Time, y = Forecast),
+            color = "blue") +
+  ggtitle("3-Year Forecast of Tractor Sales (Original Scale)") +
+  xlab("Year") +
+  ylab("Units Sold") +
+  theme_minimal()
+
+# Business Insights 
+# 1. From the forecasting, come with an inventory strategy (~50 words).
+
+# The strategy is to align the production with the forecasted demand in the months where confidence
+# bands are narrow, which indicates a low uncertainty in the forecast, so as to avoid overstocking 
+# and minimize the holding costs. Then for the critical months , e.g. July and August, where confidence 
+# bands are wide, indicating a high uncertainty in the forecast, we should align the production with 
+# the upper bound of the forecasted demand so as to avoid stockouts with a higher safety stocks.
+```
+
+```{R}
+# ------------------------------------------------------------------------------
+
+# Case 2: Panel Data on Bank Revenues
+# A banker wants to know the influential factors on revenue of 20 banks from different 
+# sectors (investment bank and commercial bank) in recent years. He gets the following 
+# data from 2015 to 2023: Assets, Liabilities, Revenue, Loans, Interest_Rate, 
+# GDP_Growth and Ibank(is investment bank or not)
+
+# Load data and libraries
+library(dplyr)
+library(ggplot2)
+library(lmerTest)   # for lmer with p‐values
+library(lme4)
+
+banks <- read.csv("bank_panel_data.csv", stringsAsFactors=TRUE)
+
+# Preliminary study 
+# 1. Draw a side-by-side boxplot of Revenue (by Bank_ID). Repeat for Revenue 
+# by Year. Comment on the heterogeneity.
+
+# Side‐by‐side boxplot of Revenue by Bank_ID
+ggplot(banks, aes(x=Bank_ID, y=Revenue)) +
+  geom_boxplot() +
+  theme(axis.text.x=element_text(angle=90, hjust=1)) +
+  ggtitle("Revenue by Bank")
+
+# Side-by-side boxplot of Revenue by Year
+ggplot(banks, aes(x=factor(Year), y=Revenue)) +
+  geom_boxplot() +
+  ggtitle("Revenue by Year")
+
+# Interpretation:
+# From the side-by-side boxplots, we can see that the revenue distributions vary 
+# widely across banks and across years and thus can conclude that there's a signal
+# of substantial heterogeneity of the revenue across banks and years.
+
+# 2. Write down the hierarchical level of this dataset.
+
+# Hierarchical levels:
+# Level‐1: Observations over years (within‐bank, time dimension), which are Assets,
+# Liabilities, Revenue, Loans, Interest_Rate, and GDP_Growth
+# They capture the changes over time within each bank.
+
+# Level‐2: Bank_ID. This represents the variations between banks within the same 
+# category (investment bank or not).
+
+# Level-3: Ibank. This represents the broadest grouping of banks, distinguishing between
+# investment banks and commercial banks.
+
+# Pre-processing 
+# 1. Standardize all the numerical variables. Use the standardized data all the way 
+# afterward.
+
+# Pre‐processing: Standardize numerical variables
+num_vars <- c("Assets","Liabilities","Revenue","Loans","Interest_Rate","GDP_Growth")
+bank_std <- banks %>%
+  mutate(across(all_of(num_vars), ~ as.numeric(scale(.))))
+```
+
+```{R}
+# Modeling 
+# 1. Fit a random slope model for Revenue with the following setting: 
+# a. Predictors: Assets, Loans, Interest_Rate, GDP_Growth 
+# b. Random slope on Loans and Interest_Rate by Bank_ID 
+# c. Random slope on Loans and Interest_Rate by Ibank 
+# d. Cross level interaction: Ibank*Loans
+
+# Modeling: Random slope model
+# Fit with cross‐level interaction
+fit1 <- lmer(Revenue ~ Assets + Loans * Ibank + Interest_Rate + GDP_Growth +
+               (Loans + Interest_Rate | Bank_ID) +
+               (Loans + Interest_Rate | Ibank),
+             data = bank_std)
+summary(fit1)
+
+anova(fit1)
+
+# 2. Check the significance of the interaction at 5% level. If it is not significant, 
+# refit the model without the interaction terms. 
+
+# Check p‐value for Loans:Ibank interaction
+# If p > 0.05, refit without interaction
+if (coef(summary(fit1))["Loans:Ibanky","Pr(>|t|)"] > 0.05) {
+  fit2 <- lmer(Revenue ~ Assets + Loans + Interest_Rate + GDP_Growth +
+                 (Loans + Interest_Rate | Bank_ID) +
+                 (Loans + Interest_Rate | Ibank),
+               data = bank_std)
+  final_fit <- fit2
+} else {
+  final_fit <- fit1
+}
+
+# Since the p-value for the interaction term is not significant, we refit the model
+# without the interaction term and the final model is fit2.
+summary(final_fit)
+
+# Interpretation:
+# Suppose Loans:Ibank is not significant → final model excludes this interaction.
+
+# Fixed‐effect estimates from final_fit describe standardized relationships.
+
+# Business Insights 
+# 1. Use the final model from above, describe how the revenue is affected by other 
+# factors. (~50 words)  
+
+# In the fixed-effects part of the final model, we can see that Assets is the only 
+# significant predictor of revenue at the level of significance of 10%, with a p-value of 
+# 0.09. The coefficient for Assets is 0.12, which means that a one‐SD increase in Assets 
+# leads to a 0.12 SD increase in revenue, where one SD is one unit on the z-scale which is
+# the sample’s original Assets standard deviation. This indicates that larger banks tend 
+# to have higher revenues. The other predictors (Loans, Interest_Rate, and GDP_Growth) do 
+# not have significant effects on revenue, as their p-values are all greater than 0.4. And,
+# in the random-effects part, we can see that variance corresponding to the random error is 
+# large, which indicates that about 86% of variation in revenue that cannot explained by the
+# model and thus there're more level-1 predictors are being left out from the model. At the 
+# time, the random intercepts and slopes indicate that there is wide heterogeneity across
+# banks and bank types, meaning that the relationship between the predictors and revenue
+# varies significantly across different banks and bank types. However, while some bank-level 
+# differences exist, the singular fit and extreme correlations imply the current random effects
+# structure overstates heterogeneity and there's no real heterogeneity. Finally, the model 
+# suggests that the revenue of banks is primarily driven by their asset size at the significance
+# level of 10%, while other factors do not significantly influence revenue. 
+
+```
