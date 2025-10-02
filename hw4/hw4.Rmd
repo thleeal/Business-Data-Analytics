@@ -1,0 +1,168 @@
+```{R}
+# Load required libraries
+library(ggplot2)
+library(caret)
+library(glmnet)
+library(MASS)
+library(pROC)
+
+# Read dataset
+data <- read.csv("employee_churn_data.csv")
+
+# Preliminary Study
+# 1. Check the employee retention/turnover rate. 
+
+# Calculate turnover rate
+turnover_rate <- mean(data$left)
+cat("Turnover Rate:", turnover_rate, "\n")
+
+# Calculate retention rate
+retention_rate <- 1 - turnover_rate
+cat("Retention Rate:", retention_rate, "\n")
+
+# Turnover/retention rate
+print("Turnover/Retention Rate:")
+print(turnover_rate/retention_rate)
+
+# 2. Draw a side-by-side bar chart to see the distribution of left/stay among 
+# departments.
+
+# Side-by-side bar chart for department retention
+ggplot(data, aes(x = department, fill = factor(left))) +
+  geom_bar(position = "dodge") +
+  scale_fill_discrete(labels = c("Stay", "Left")) +
+  labs(title = "Retention by Department", x = "Department", fill = "Status")
+```
+
+```{R}
+# Preprocessing
+# 1. Creating dummy variables for all categorical variables.
+
+# Create dummy variables for categorical features
+# Since Logistic regression assumes no multicollinearity, we need to create dummy variables for categorical features
+# and remove one level to avoid dummy variable trap
+# (fullRank = TRUE)
+
+dummies <- dummyVars(~ department + salary, data = data, fullRank = TRUE)
+print("Dummy Variables Created:")
+str(dummies)
+data_dummies <- predict(dummies, newdata = data)
+data_processed <- cbind(data[, !names(data) %in% c("department", "salary")], data_dummies)
+write.csv(data_processed, "employee_churn_data_processed.csv", row.names = FALSE)
+
+# 2. Take the first 7000 observations to be the train set, and the remaining 
+# observations to be test set.
+
+# Split into train/test sets (adjust indices for full dataset)
+train_indices <- 1:7000  
+test_indices <- setdiff(seq_len(nrow(data_processed)), train_indices)
+train <- data_processed[train_indices, ]
+test <- data_processed[test_indices, ]
+```
+```{R}
+# Modeling
+# 1. Use the train set, select predictors by 
+# a. Forward (AIC) method, then build a logistic model (by MLE) with the 
+# selected predictors (model.1) [remark: no need to use dummy variables 
+# for Forward selection under R] 
+
+# Forward Selection (AIC)
+train_original <- data[train_indices, ]
+train_original$department <- factor(train_original$department)
+train_original$salary <- factor(train_original$salary)
+
+null_model <- glm(left ~ 1, data = train_original, family = binomial)
+full_model <- glm(left ~ ., data = train_original, family = binomial)
+model_forward <- stepAIC(null_model, scope = list(lower = null_model, upper = full_model), direction = "forward")
+
+print("Forward Selection Model Summary:")
+summary(model_forward)
+
+# b. LASSO (use 1sd rule), then build a logistic model (by MLE) with the 
+# selected predictors (model.2) [remark: LASSO needs dummy variables 
+# for categorical variables]
+
+# LASSO with 1SE rule
+x <- as.matrix(train[, -which(colnames(train) == "left")])
+y <- train$left
+
+cv_lasso <- cv.glmnet(x, y, family = "binomial", alpha = 1, nfolds = 10)
+lambda_1se <- cv_lasso$lambda.1se
+lasso_coef <- coef(cv_lasso, s = lambda_1se)
+selected_vars <- rownames(lasso_coef)[which(lasso_coef != 0)][-1]
+
+# Check if any variables were selected
+print("LASSO Selected Variables:")
+print(selected_vars)
+
+# confirm the results with another method
+lasso.fit = glmnet(x, as.matrix(y),alpha=1,family="binomial",lambda=lambda_1se)#lambda by 1se
+lasso.fit$beta
+
+if(length(selected_vars) == 0) {
+  model_lasso <- glm(left ~ 1, data = train, family = binomial)
+} else {
+  model_lasso <- glm(as.formula(paste("left ~", paste(selected_vars, collapse = "+"))), data = train, family = binomial)
+}
+
+# since the selcted variables are not none and the length of selected variables is positive, we can
+# build the model with the selected predictors.
+
+print("model_lasso Summary:")
+summary(model_lasso)
+```
+
+```{R}
+# 2. Use the test set to compare the performances of the two models by AUC.  
+
+# Compare AUC
+test_original <- data[test_indices, ]
+test_original$department <- factor(test_original$department, levels = levels(train_original$department))
+test_original$salary <- factor(test_original$salary, levels = levels(train_original$salary))
+
+prob_forward <- predict(model_forward, test_original, type = "response")
+prob_lasso <- predict(model_lasso, test, type = "response")
+
+auc_forward <- auc(roc(test_original$left, prob_forward))
+auc_lasso <- auc(roc(test$left, prob_lasso))
+
+cat("Forward AUC:", auc_forward, "\nLASSO AUC:", auc_lasso, "\n")
+
+# 3. Refit the better model from above by the whole dataset (Final model)   
+
+# Refit better model
+final_model <- if(auc_forward > auc_lasso) {
+  glm(formula(model_forward), data = data, family = binomial)
+} else {
+  glm(formula(model_lasso), data = data_processed, family = binomial)
+}
+
+# since the forward auc is greater than the lasso auc, we will use the model with forward(AIC)
+# selection as the final model.
+
+summary(final_model)
+
+# Business Insights
+# 1. From the final model, propose strategy for employee retention (~50 words). 
+
+# Since the p-value of all predictors is less than 0.05, we can conclude that all the predictors
+# are significant. A unit increase in the review score will increase the log-odds of leaving the
+# company by 11.14; a unit increase in the satisfaction score will increase the log-odds of the 
+# leaving by 2.45; a 1-hour increase in the average monthly hours employee worked will increase 
+# the log-odds of the leaving by 0.06; promoting employee can reduce the log-odds of the leaving
+# by 0.56. Therefore, we can conclude that the company should focus on retaining high performing
+# employees by maybe increasing their salaries since with a higher review score, the employee is
+# more likely to leave the company. The company should also reassess the satisfaction metrics of
+# the employee surveys since the positive correlation between satisfaction and leaving is
+# counterintuitive. Then, the company should also consider reducing the average monthly hours 
+# worked by employees since the leaving rate is positively correlated with the average monthly 
+# hours worked. Finally, the company should also consider giving more promotion to the employees 
+# since the leaving rate is negatively correlated with the promotion rate. The primary focus should
+# be on retaining the higher performers by maybe increasing their salaries since they have the
+# highest coefficients. 
+
+library(car)
+# Check for multicollinearity
+vif(final_model)
+# since the VIF is less than 10, we can conclude that there is no multicollinearity for the model.
+```
